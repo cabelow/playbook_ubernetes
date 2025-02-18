@@ -1,0 +1,60 @@
+# Ansible playbook para instalar e configurar Kubernetes com Calico
+- hosts: all
+  become: true
+  tasks:
+    - name: Atualizar pacotes
+      apt:
+        update_cache: yes
+
+    - name: Instalar dependências
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+        state: present
+
+    - name: Adicionar chave GPG do Kubernetes
+      shell: curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/kubernetes-archive-keyring.gpg
+
+    - name: Adicionar repositório Kubernetes
+      apt_repository:
+        repo: deb [signed-by=/usr/share/keyrings/kubernetes-archive-keyring.gpg] https://apt.kubernetes.io/ kubernetes-xenial main
+        state: present
+
+    - name: Instalar kubelet, kubeadm e kubectl
+      apt:
+        name:
+          - kubelet
+          - kubeadm
+          - kubectl
+        state: present
+
+    - name: Desabilitar swap
+      command: swapoff -a
+
+    - name: Inicializar Kubernetes com kubeadm
+      command: kubeadm init --pod-network-cidr=192.168.0.0/16
+      when: inventory_hostname == 'master'
+
+    - name: Configurar kubectl para o usuário atual
+      become_user: ubuntu
+      command: mkdir -p $HOME/.kube && cp /etc/kubernetes/admin.conf $HOME/.kube/config && chown $(id -u):$(id -g) $HOME/.kube/config
+      when: inventory_hostname == 'master'
+
+    - name: Instalar Calico CNI
+      command: kubectl apply -f https://docs.projectcalico.org/manifests/calico.yaml
+      when: inventory_hostname == 'master'
+
+    - name: Obter comando de join do Kubernetes
+      command: kubeadm token create --print-join-command
+      register: join_command
+      when: inventory_hostname == 'master'
+
+    - name: Salvar comando de join
+      copy:
+        content: "{{ join_command.stdout }}"
+        dest: /vagrant/join-command.yml
+      when: inventory_hostname == 'master'
